@@ -6,7 +6,7 @@ import torch.nn as nn
 from transformers import ProcessorMixin
 
 from vllm.config import VllmConfig
-from vllm.transformers_utils.configs.nanovlm import NanoVLMConfig
+from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
 from vllm.model_executor.models.utils import IntermediateTensors, maybe_prefix
 from vllm.utils.tensor_schema import TensorSchema, TensorShape
 from vllm.multimodal import MULTIMODAL_REGISTRY

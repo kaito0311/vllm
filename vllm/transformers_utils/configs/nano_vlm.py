@@ -2,7 +2,7 @@ from transformers.configuration_utils import PretrainedConfig
 
 
 class NanoVLMConfig(PretrainedConfig):
-    model_type = "nanovlm"
+    model_type = "nano_vlm"
 
     def __init__(
         self,

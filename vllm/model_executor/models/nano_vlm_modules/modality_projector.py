@@ -2,7 +2,7 @@
 import torch.nn as nn
 
 class ModalityProjector(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.cfg = cfg
         self.input_dim = cfg.vit_hidden_dim * (cfg.mp_pixel_shuffle_factor**2)

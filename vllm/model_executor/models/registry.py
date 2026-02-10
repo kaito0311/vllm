@@ -477,6 +477,7 @@ _MULTIMODAL_MODELS = {
         "NemotronParseForConditionalGeneration",
     ),
     "WhisperForConditionalGeneration": ("whisper", "WhisperForConditionalGeneration"),  # noqa: E501
+    "NanoVLMForConditionalGeneration": ("nano_vlm", "NanoVLMForConditionalGeneration"),
 }
 
 _SPECULATIVE_DECODING_MODELS = {

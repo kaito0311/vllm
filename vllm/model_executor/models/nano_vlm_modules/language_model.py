@@ -17,7 +17,7 @@ class RMSNorm(nn.Module):
             - lm_hidden_dim (int): The dimensionality of the model hidden states. 
             - lm_rms_eps (float): A small constant to avoid division by zero.
     """
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(cfg.lm_hidden_dim))
         self.eps = cfg.lm_rms_eps
@@ -54,7 +54,7 @@ class RotaryEmbedding(nn.Module):
                 - lm_attn_scaling (float): Attention scaling factor.
         """
     
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         assert cfg.lm_hidden_dim % cfg.lm_n_heads == 0, "Hidden dimension must be divisible by number of heads"
         
@@ -177,7 +177,7 @@ class LanguageModelGroupedQueryAttention(nn.Module):
             - lm_hidden_dim (int): Hidden embedding dimension.
             - lm_dropout (float): Dropout rate.
     """
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
 
         self.n_heads = cfg.lm_n_heads
@@ -327,7 +327,7 @@ class LanguageModelMLP(nn.Module):
         down_proj (nn.Linear): Linear projection for downscaling back to embedding dim.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.embd_dim = cfg.lm_hidden_dim
         self.inter_dim = cfg.lm_inter_dim
@@ -356,12 +356,12 @@ class LanguageModelMLP(nn.Module):
 
 # https://github.com/meta-llama/llama3/blob/main/llama/model.py#L222
 class LanguageModelBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
-        self.mlp = LanguageModelMLP(cfg)
-        self.attn = LanguageModelGroupedQueryAttention(cfg)
-        self.norm1 = RMSNorm(cfg) # Input Norm
-        self.norm2 = RMSNorm(cfg) # Post Attention Norm
+        self.mlp = LanguageModelMLP(cfg, prefix=f"{prefix}.mlp")
+        self.attn = LanguageModelGroupedQueryAttention(cfg, prefix=f"{prefix}.attn")
+        self.norm1 = RMSNorm(cfg, prefix=f"{prefix}.norm1") # Input Norm
+        self.norm2 = RMSNorm(cfg, prefix=f"{prefix}.norm2") # Post Attention Norm
     
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, attention_mask: torch.Tensor=None, block_kv_cache: dict=None):
         """
@@ -395,18 +395,18 @@ class LanguageModelBlock(nn.Module):
 
 # https://github.com/meta-llama/llama3/blob/main/llama/model.py#L251
 class LanguageModel(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.cfg = cfg
         self.lm_use_tokens = cfg.lm_use_tokens
         self.lm_tie_weights = cfg.lm_tie_weights
 
         self.token_embedding = nn.Embedding(cfg.lm_vocab_size, cfg.lm_hidden_dim)
-        self.rotary_embd = RotaryEmbedding(cfg)
+        self.rotary_embd = RotaryEmbedding(cfg, prefix=f"{prefix}.rotary_embd")
         self.blocks = nn.ModuleList([
-            LanguageModelBlock(cfg) for _ in range(cfg.lm_n_blocks)
+            LanguageModelBlock(cfg, prefix=f"{prefix}.blocks.{i}") for i in range(cfg.lm_n_blocks)
         ])
-        self.norm = RMSNorm(cfg) # Final Norm
+        self.norm = RMSNorm(cfg, prefix=f"{prefix}.norm") # Final Norm
         self.head = nn.Linear(cfg.lm_hidden_dim, cfg.lm_vocab_size, bias=False)
         if self.lm_tie_weights:
             self.head.weight = self.token_embedding.weight
@@ -548,7 +548,7 @@ class LanguageModel(nn.Module):
 
     # Load the model from a pretrained HuggingFace model (we don't want to have to train the Language Backbone from scratch)
     @classmethod
-    def from_pretrained(cls, cfg):
+    def from_pretrained(cls, cfg, prefix: str = "language_model"):
         from transformers import AutoConfig
         from huggingface_hub import hf_hub_download
         import safetensors
@@ -585,7 +585,7 @@ class LanguageModel(nn.Module):
         cfg.lm_n_blocks = hf_config.num_hidden_layers
         
         # Create our model with potentially larger vocabulary
-        model = cls(cfg)
+        model = cls(cfg, prefix=prefix)
         
         try:
             index_path = hf_hub_download(repo_id=cfg.lm_model_type, filename="model.safetensors.index.json")
@@ -646,8 +646,6 @@ class LanguageModel(nn.Module):
                             std = 0.02  # Common value, but you might want to adjust based on model
                             init.normal_(sd[our_key][tensor.shape[0]:], mean=0.0, std=std)
                             
-                            print(f"Initialized {sd[our_k
-                                                    ey].shape[0] - tensor.shape[0]} new token embeddings")
                             sd['head.weight'].copy_(sd[our_key])  # Update the head weights as well
                         elif tensor.shape == sd[our_key].shape:
                             sd[our_key].copy_(tensor)

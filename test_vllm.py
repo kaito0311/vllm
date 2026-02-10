@@ -3,7 +3,8 @@ from PIL import Image
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
 def main():
-    llm = LLM("./pretrained_models/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
+    # llm = LLM("./pretrained_models/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
+    llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
     llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
     prompt = "USER: <image>\nWhat is the content of this image?\nASSISTANT:"

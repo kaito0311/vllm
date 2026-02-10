@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 # https://github.com/huggingface/transformers/blob/main/src/transformers/models/siglip/modeling_siglip.py#L245
 class ViTPatchEmbeddings(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
 
         self.img_size = cfg.vit_img_size
@@ -45,7 +45,7 @@ class ViTPatchEmbeddings(nn.Module):
 # https://github.com/huggingface/transformers/blob/main/src/transformers/models/siglip/modeling_siglip.py#L381
 # https://github.com/karpathy/nanoGPT/blob/master/model.py#L29
 class ViTMultiHeadAttention(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
 
         self.n_heads = cfg.vit_n_heads
@@ -99,7 +99,7 @@ class ViTMultiHeadAttention(nn.Module):
 
 # https://github.com/huggingface/transformers/blob/main/src/transformers/models/siglip/modeling_siglip.py#L453
 class ViTMLP(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.activation_fn = nn.GELU(approximate='tanh')
         self.fc1 = nn.Linear(cfg.vit_hidden_dim, cfg.vit_inter_dim)
@@ -115,12 +115,12 @@ class ViTMLP(nn.Module):
 
 # https://github.com/karpathy/nanoGPT/blob/master/model.py#L94    
 class ViTBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.ln1 = nn.LayerNorm(cfg.vit_hidden_dim, eps=cfg.vit_ln_eps)
-        self.attn = ViTMultiHeadAttention(cfg)
+        self.attn = ViTMultiHeadAttention(cfg, prefix=f"{prefix}.attn")
         self.ln2 = nn.LayerNorm(cfg.vit_hidden_dim, eps=cfg.vit_ln_eps)
-        self.mlp = ViTMLP(cfg)
+        self.mlp = ViTMLP(cfg, prefix=f"{prefix}.mlp")
     
     def forward(self, x):
         x = x + self.attn(self.ln1(x))
@@ -129,13 +129,13 @@ class ViTBlock(nn.Module):
     
 
 class ViT(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, prefix: str = ""):
         super().__init__()
         self.cfg = cfg
-        self.patch_embedding = ViTPatchEmbeddings(cfg)
+        self.patch_embedding = ViTPatchEmbeddings(cfg, prefix=f"{prefix}.patch_embedding")
         self.cls_flag = cfg.vit_cls_flag
         self.dropout = nn.Dropout(cfg.vit_dropout)
-        self.blocks = nn.ModuleList([ViTBlock(cfg) for _ in range(cfg.vit_n_blocks)])
+        self.blocks = nn.ModuleList([ViTBlock(cfg, prefix=f"{prefix}.blocks.{i}") for i in range(cfg.vit_n_blocks)])
         self.layer_norm = nn.LayerNorm(cfg.vit_hidden_dim, eps=cfg.vit_ln_eps)
 
         self.apply(self._init_weights)
@@ -169,7 +169,7 @@ class ViT(nn.Module):
     
     # Load the model from a pretrained HuggingFace model (we don't want to have to train the Vision Backbone from scratch)
     @classmethod
-    def from_pretrained(cls, cfg):
+    def from_pretrained(cls, cfg, prefix: str = "vision_model"):
         from transformers import SiglipVisionConfig
         from huggingface_hub import hf_hub_download
         import safetensors
@@ -183,7 +183,7 @@ class ViT(nn.Module):
         cfg.vit_n_heads=hf_config.num_attention_heads
         cfg.vit_n_blocks=hf_config.num_hidden_layers
         cfg.vit_patch_size=hf_config.patch_size
-        model = cls(cfg)
+        model = cls(cfg, prefix=prefix)
         safetensors_file = hf_hub_download(repo_id=cfg.vit_model_type, filename="model.safetensors")
 
         sd = model.state_dict()

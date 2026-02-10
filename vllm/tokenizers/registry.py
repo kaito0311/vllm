@@ -36,6 +36,7 @@ _VLLM_TOKENIZERS = {
     "grok2": ("grok2", "Grok2Tokenizer"),
     "hf": ("hf", "CachedHfTokenizer"),
     "mistral": ("mistral", "MistralTokenizer"),
+    "nano_vlm": ("nano_vlm", "CachedNanoVLMTokenizer"),
 }
 
 
@@ -164,6 +165,14 @@ def resolve_tokenizer_args(
         revision=revision,
     ):
         tokenizer_mode = "grok2"
+    
+    if tokenizer_mode == "auto" and any_pattern_in_repo_files(
+        model_name_or_path=str(tokenizer_name),
+        allow_patterns=["nanovlm.json"], # NOTE: let's get the tokenizer for nanovlm, not use hf tokenizer
+        revision=revision,
+    ):
+        tokenizer_mode = "nano_vlm"
+ 
 
     # Fallback to HF tokenizer
     if tokenizer_mode == "auto":

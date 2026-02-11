@@ -1,24 +1,38 @@
 
-from typing import Optional, cast, Annotated, Literal, TypeAlias, Union
+import math
 from itertools import accumulate
+from collections.abc import Mapping, Sequence
+from typing import Optional, cast, Annotated, Literal, TypeAlias, Union
 
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
-from transformers import ProcessorMixin
+from transformers import Idefics3ImageProcessor, ProcessorMixin
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.image_processing_base import BatchFeature as ImageBatchFeature
 
 from vllm.config import VllmConfig
+from vllm.config.multimodal import BaseDummyOptions
 from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
 from vllm.model_executor.models.utils import IntermediateTensors, maybe_prefix
 from vllm.utils.tensor_schema import TensorSchema, TensorShape
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.processing import BaseProcessingInfo, BaseDummyInputsBuilder, BaseMultiModalProcessor
-from .interfaces import SupportsMultiModal
+from vllm.multimodal.processing import BaseProcessingInfo, BaseDummyInputsBuilder, BaseMultiModalProcessor, PromptReplacement
+from vllm.multimodal.processing import (
+    BaseProcessingInfo,
+    PromptUpdate,
+    PromptUpdateDetails,
+)
+from vllm.multimodal.parse import ImageProcessorItems, MultiModalDataItems
+from vllm.multimodal.inputs import (
+    MultiModalDataDict,
+    MultiModalFieldConfig,
+    MultiModalKwargsItems,
+)
 
+from .interfaces import SupportsMultiModal
 from .interfaces import MultiModalEmbeddings
 
 from .nano_vlm_modules.language_model import LanguageModel
@@ -97,7 +111,7 @@ class NanoVLMImageProcessor:
         rows = torch.tensor(rows)  # (bn, 1)
         cols = torch.tensor(cols)  # (bn, 1)
 
-        bn, p, c, h, w = processed_images.shape
+        bn, p, _, h, w = processed_images.shape
 
         pixel_attention_mask = torch.ones((bn, p, h, w), dtype=torch.bool)
 
@@ -277,23 +291,275 @@ class NanoVLMProcessor(ProcessorMixin):
             text_inputs = self.tokenizer(text=text)
             inputs.update(text_inputs)
 
-        return BatchFeature(data=inputs, tensor_type=None)
+        return BatchFeature(data=inputs, tensor_type=None) # type: ignore
 
     def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
+        ...
 
 
 class NanoVLMProcessingInfo(BaseProcessingInfo):
     def get_hf_processor(self, **kwargs: object) -> NanoVLMProcessor:
-        ...
+        image_processor = NanoVLMImageProcessor(
+            max_image_size=self.ctx.model_config.hf_config.max_img_size,
+            patch_size=self.ctx.model_config.hf_config.vit_img_size,
+            resize_to_max_size_len=self.ctx.model_config.hf_config.resize_to_max_side_len,
+        )
+
+        processor = NanoVLMProcessor(
+            image_processor=image_processor,
+            tokenizer=self.ctx.tokenizer,
+            image_seq_len=self.ctx.model_config.hf_config.mp_image_token_length,
+        )
+        
+        return processor
+
+    def get_supported_mm_limits(self) -> Mapping[str, int | None]:
+        return {"image": 1}
+
+
+    def _resize_output_size(
+        self,
+        *,
+        height: int,
+        width: int,
+        max_len: int | None = None,
+        min_len: int = 1,
+        max_size: int | None = None,
+    ) -> tuple[int, int]:
+        # Set default value for max_len if not provided
+        max_len = max(height, width) if max_len is None else max_len
+        aspect_ratio = width / height
+
+        # Handle the maximum size constraint
+        if max_size is not None:
+            max_len = min(max_len, max_size)
+
+        # Adjust dimensions according to the aspect ratio
+        if width >= height:
+            width = max_len
+            height = int(width / aspect_ratio)
+        else:
+            height = max_len
+            width = int(height * aspect_ratio)
+
+        # Ensure both width and height are even (if needed)
+        height += height % 2
+        width += width % 2
+
+        # Ensure dimensions are not smaller than the minimum length
+        height = max(height, min_len)
+        width = max(width, min_len)
+
+        return height, width
+
+    def _get_resize_output_image_size(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+        resolution_max_side: int,
+    ) -> tuple[int, int]:
+        hf_processor = self.get_hf_processor()
+        image_processor: Idefics3ImageProcessor = hf_processor.image_processor
+        max_image_size = image_processor.size["longest_edge"]
+        if resolution_max_side > max_image_size:
+            raise ValueError(
+                "`resolution_max_side` cannot be larger than `max_image_size`"
+            )
+
+        height, width = image_height, image_width
+
+        # Find the output size, when rescaling the longest edge to max_len and
+        # preserving the aspect ratio
+        height, width = self._resize_output_size(
+            height=height, width=width, max_len=resolution_max_side
+        )
+        return height, width
+
+    def _get_image_feature_grid_size(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+        processor: NanoVLMProcessor | None,
+    ) -> tuple[int, int]:
+        if processor is None:
+            processor = self.get_hf_processor()
+
+        image_processor: NanoVLMImageProcessor = processor.image_processor
+
+        max_image_size = image_processor.max_image_size
+
+        assert image_processor.resize_to_max_size_len is True, (
+            "The image_processor must have `resize_to_max_size_len=True` to ensure the `size` is equal to `max_image_size`."
+        )
+        size = image_processor.max_image_size
+
+        assert size % max_image_size == 0, (
+            "`longest_edge` in image_processor's `size` must be divisible by "
+            "`longest_edge` in `max_image_size`, this may be caused by "
+            "incorrect mm_kwargs override."
+        )
+
+        resized_height, resized_width = self._get_resize_output_image_size(
+            image_width=image_width,
+            image_height=image_height,
+            resolution_max_side=size,
+        )
+        if resized_height > max_image_size or resized_width > max_image_size:
+            grid_h = math.ceil(resized_height / max_image_size)
+            grid_w = math.ceil(resized_width / max_image_size)
+        else:
+            grid_h = grid_w = 0
+        return grid_w, grid_h
+
+    def _get_image_token(
+        self, processor: NanoVLMProcessor | None
+    ) -> tuple[str, str]:
+        if processor is None:
+            processor = self.get_hf_processor()
+
+        image_token = processor.image_token
+        global_image_token = processor.global_image_token
+
+        return image_token, global_image_token
+
+    def get_image_repl(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+        processor: NanoVLMProcessor | None
+    ) -> str:
+        if processor is None:
+            processor = self.get_hf_processor()
+
+        image_token, global_image_token = self._get_image_token(processor)
+
+        image_seq_len = processor.image_seq_len
+
+        grid_placeholders = "<row_{n_h}_col_{n_w}>"
+
+        p_image = image_token * image_seq_len
+
+        global_img_placeholder = global_image_token + p_image
+        tile_img_placeholder = grid_placeholders + p_image
+
+        grid_w, grid_h = self._get_image_feature_grid_size(
+            image_width=image_width,
+            image_height=image_height,
+            processor=processor,
+        )
+
+        if grid_w == 0 and grid_h == 0:
+            return global_img_placeholder
+
+        tiles_placeholder = list[str]()
+        for i in range(grid_h):
+            for j in range(grid_w):
+                tiles_placeholder.append(
+                    tile_img_placeholder.format(n_h=i + 1, n_w=j + 1)
+                )
+
+        return "".join(
+            [
+                global_img_placeholder,
+                *tiles_placeholder
+            ]
+        )
 
 
 class NanoVLMDummyInputsBuilder(BaseDummyInputsBuilder[NanoVLMProcessingInfo]):
-    ...
+    def get_dummy_text(self, mm_counts: Mapping[str, int]) -> str:
+        num_images = mm_counts.get("image", 0)
 
+        processor = self.info.get_hf_processor()
+        image_token, _ = self.info._get_image_token(processor)
+
+        return image_token * num_images
+
+    def get_dummy_mm_data(
+        self,
+        seq_len: int,
+        mm_counts: Mapping[str, int],
+        mm_options: Mapping[str, BaseDummyOptions] | None = None,
+    ) -> MultiModalDataDict:
+        num_images = mm_counts.get("image", 0)
+        hf_processor = self.info.get_hf_processor()
+        image_processor: NanoVLMImageProcessor = hf_processor.image_processor
+        longest_edge = image_processor.max_image_size
+
+        image_overrides = mm_options.get("image") if mm_options else None
+
+        return {
+            "image": self._get_dummy_images(
+                width=longest_edge,
+                height=longest_edge,
+                num_images=num_images,
+                overrides=image_overrides,
+            )
+        }
 
 class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo]):
     # TODO
-    ...
+    def _call_hf_processor(
+        self,
+        prompt: str,
+        mm_data: Mapping[str, object],
+        mm_kwargs: Mapping[str, object],
+        tok_kwargs: Mapping[str, object],
+    ) -> BatchFeature:
+        ...
+
+
+    def _get_mm_fields_config(
+        self,
+        hf_inputs: BatchFeature,
+        hf_processor_mm_kwargs: Mapping[str, object],
+    ) -> Mapping[str, MultiModalFieldConfig]:
+        num_patches = hf_inputs.get("num_patches", torch.empty(0))
+
+        return dict(
+            pixel_values=MultiModalFieldConfig.flat_from_sizes("image", num_patches),
+            pixel_attention_mask=MultiModalFieldConfig.flat_from_sizes(
+                "image", num_patches
+            ),
+            image_embeds=MultiModalFieldConfig.batched("image"),
+            num_patches=MultiModalFieldConfig.batched("image"),
+        )
+
+    def _get_prompt_updates(
+        self,
+        mm_items: MultiModalDataItems,
+        hf_processor_mm_kwargs: Mapping[str, object],
+        out_mm_kwargs: MultiModalKwargsItems,
+    ) -> Sequence[PromptUpdate]:
+        hf_processor = self.info.get_hf_processor(**hf_processor_mm_kwargs)
+        image_token, _ = self.info._get_image_token(hf_processor)
+
+        def get_replacement_nanovlm(item_idx: int) -> PromptUpdateDetails:
+            images = mm_items.get_items("image", ImageProcessorItems)
+
+            image_size = images.get_image_size(item_idx)
+
+            image_repl = self.info.get_image_repl(
+                image_width=image_size.width,
+                image_height=image_size.height,
+                processor=hf_processor,
+            )
+
+            return PromptUpdateDetails.select_text(
+                image_repl,
+                embed_text=image_token,
+            )
+
+        return [
+            PromptReplacement(
+                modality="image",
+                target=image_token,
+                replacement=get_replacement_nanovlm,
+            )
+        ]
 
 
 class NanoVLMModel(nn.Module):

@@ -105,11 +105,11 @@ class NanoVLMImageProcessor:
 
                 rows.append([num_patches_h])
                 cols.append([num_patches_w])
-                processed_images.append(row_images)
+                processed_images.append(torch.concat(row_images))
 
-        processed_images = torch.tensor(processed_images)  # (bn, p, c, h, w)
-        rows = torch.tensor(rows)  # (bn, 1)
-        cols = torch.tensor(cols)  # (bn, 1)
+        processed_images = torch.stack(processed_images)  # (bn, p, c, h, w)
+        rows = rows  # (bn, 1)
+        cols = cols  # (bn, 1)
 
         bn, p, _, h, w = processed_images.shape
 
@@ -234,13 +234,12 @@ class NanoVLMProcessor(ProcessorMixin):
                     image_seq_lengths = []
 
                     for n_rows, n_cols in zip(sample_rows, sample_cols):
+                        if len(sample_rows) > 1:
+                            raise NotImplementedError(
+                                "Multiple images per sample are not supported yet.")
                         image_prompt_string = ""
                         count = 0
-                        for idx, (n_h, n_w) in enumerate(zip(n_rows, n_cols)):
-                            if len(n_rows) > 1:
-                                raise NotImplementedError(
-                                    "Multiple images per sample are not supported yet.")
-
+                        for idx, (n_h, n_w) in enumerate([(n_rows, n_cols)]):
                             image_prompt_string += global_img_token
                             count += 1
                             image_prompt_string += image_token * image_seq_len
@@ -289,9 +288,10 @@ class NanoVLMProcessor(ProcessorMixin):
                     f"Found {sum(n_images_in_text)} {self.image_token} tokens in the text but no images were passed."
                 )
             text_inputs = self.tokenizer(text=text)
-            inputs.update(text_inputs)
+            inputs.update(text_inputs)        
+        return_tensors = kwargs.get("return_tensors", None) 
 
-        return BatchFeature(data=inputs, tensor_type=None) # type: ignore
+        return BatchFeature(data=inputs, tensor_type=return_tensors) # type: ignore
 
     def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
         ...
@@ -316,6 +316,20 @@ class NanoVLMProcessingInfo(BaseProcessingInfo):
     def get_supported_mm_limits(self) -> Mapping[str, int | None]:
         return {"image": 1}
 
+    def get_num_patches(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+        processor: NanoVLMProcessor | None,
+    ) -> int:
+        grid_w, grid_h = self._get_image_feature_grid_size(
+            image_width=image_width,
+            image_height=image_height,
+            processor=processor,
+        )
+
+        return grid_w * grid_h + 1
 
     def _resize_output_size(
         self,
@@ -360,8 +374,8 @@ class NanoVLMProcessingInfo(BaseProcessingInfo):
         resolution_max_side: int,
     ) -> tuple[int, int]:
         hf_processor = self.get_hf_processor()
-        image_processor: Idefics3ImageProcessor = hf_processor.image_processor
-        max_image_size = image_processor.size["longest_edge"]
+        image_processor: NanoVLMImageProcessor = hf_processor.image_processor
+        max_image_size = image_processor.max_image_size
         if resolution_max_side > max_image_size:
             raise ValueError(
                 "`resolution_max_side` cannot be larger than `max_image_size`"
@@ -509,7 +523,42 @@ class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo])
         mm_kwargs: Mapping[str, object],
         tok_kwargs: Mapping[str, object],
     ) -> BatchFeature:
-        ...
+        # Text-only input not supported in composite processor
+        if not (images := mm_data.get("images", [])):
+            prompt_ids = self.info.get_tokenizer().encode(prompt)
+            prompt_ids = self._apply_hf_processor_tokens_only(prompt_ids)
+            return BatchFeature(dict(input_ids=[prompt_ids]), tensor_type="pt")
+        
+        mm_kwargs = {"input_data_format": "channels_last", **mm_kwargs}
+        processed_outputs = super()._call_hf_processor(
+            prompt,
+            mm_data,
+            mm_kwargs,
+            tok_kwargs,
+        )
+
+        mm_items = self.info.parse_mm_data({"image": images}, validate=False)
+        parsed_images = mm_items.get_items("image", ImageProcessorItems)
+        image_sizes = [
+            parsed_images.get_image_size(i) for i in range(len(parsed_images))
+        ]
+        hf_processor = self.info.get_hf_processor(**mm_kwargs)
+
+        num_patches = [
+            self.info.get_num_patches(
+                image_width=size.width,
+                image_height=size.height,
+                processor=hf_processor,
+            )
+            for size in image_sizes
+        ]
+        processed_outputs["num_patches"] = torch.tensor(num_patches)
+
+        # Remove the extra batch dimension
+        processed_outputs["pixel_values"].squeeze_(0)
+        processed_outputs["pixel_attention_mask"].squeeze_(0)
+
+        return processed_outputs
 
 
     def _get_mm_fields_config(

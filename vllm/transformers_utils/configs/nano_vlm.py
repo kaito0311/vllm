@@ -92,6 +92,10 @@ class NanoVLMConfig(PretrainedConfig):
         self.hidden_size = lm_hidden_dim
         self.vocab_size = lm_vocab_size
         self.num_key_value_heads = lm_n_kv_heads
+        
+        self.scale_factor = 4
+        self.image_token_id = 49152
+
 
 
         super().__init__(**kwargs)

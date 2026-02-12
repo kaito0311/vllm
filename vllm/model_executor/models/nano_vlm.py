@@ -1,7 +1,7 @@
 
 import math
 from itertools import accumulate
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Iterable
 from typing import Optional, cast, Annotated, Literal, TypeAlias, Union
 
 import torch
@@ -31,6 +31,7 @@ from vllm.multimodal.inputs import (
     MultiModalFieldConfig,
     MultiModalKwargsItems,
 )
+from vllm.model_executor.layers.logits_processor import LogitsProcessor
 
 from .interfaces import SupportsMultiModal
 from .interfaces import MultiModalEmbeddings
@@ -288,10 +289,11 @@ class NanoVLMProcessor(ProcessorMixin):
                     f"Found {sum(n_images_in_text)} {self.image_token} tokens in the text but no images were passed."
                 )
             text_inputs = self.tokenizer(text=text)
-            inputs.update(text_inputs)        
-        return_tensors = kwargs.get("return_tensors", None) 
+            inputs.update(text_inputs)
+        return_tensors = kwargs.get("return_tensors", None)
 
-        return BatchFeature(data=inputs, tensor_type=return_tensors) # type: ignore
+        # type: ignore
+        return BatchFeature(data=inputs, tensor_type=return_tensors)
 
     def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
         ...
@@ -310,7 +312,7 @@ class NanoVLMProcessingInfo(BaseProcessingInfo):
             tokenizer=self.ctx.tokenizer,
             image_seq_len=self.ctx.model_config.hf_config.mp_image_token_length,
         )
-        
+
         return processor
 
     def get_supported_mm_limits(self) -> Mapping[str, int | None]:
@@ -514,6 +516,7 @@ class NanoVLMDummyInputsBuilder(BaseDummyInputsBuilder[NanoVLMProcessingInfo]):
             )
         }
 
+
 class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo]):
     # TODO
     def _call_hf_processor(
@@ -528,7 +531,7 @@ class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo])
             prompt_ids = self.info.get_tokenizer().encode(prompt)
             prompt_ids = self._apply_hf_processor_tokens_only(prompt_ids)
             return BatchFeature(dict(input_ids=[prompt_ids]), tensor_type="pt")
-        
+
         mm_kwargs = {"input_data_format": "channels_last", **mm_kwargs}
         processed_outputs = super()._call_hf_processor(
             prompt,
@@ -560,7 +563,6 @@ class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo])
 
         return processed_outputs
 
-
     def _get_mm_fields_config(
         self,
         hf_inputs: BatchFeature,
@@ -569,7 +571,8 @@ class NanoVLMMultiModalProcessor(BaseMultiModalProcessor[NanoVLMProcessingInfo])
         num_patches = hf_inputs.get("num_patches", torch.empty(0))
 
         return dict(
-            pixel_values=MultiModalFieldConfig.flat_from_sizes("image", num_patches),
+            pixel_values=MultiModalFieldConfig.flat_from_sizes(
+                "image", num_patches),
             pixel_attention_mask=MultiModalFieldConfig.flat_from_sizes(
                 "image", num_patches
             ),
@@ -707,6 +710,8 @@ class NanoVLMModel(nn.Module):
     ) -> torch.Tensor:
         ...
 
+from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
+from vllm.model_executor.models.module_mapping import MultiModelKeys
 
 @MULTIMODAL_REGISTRY.register_processor(
     NanoVLMMultiModalProcessor,
@@ -716,13 +721,71 @@ class NanoVLMModel(nn.Module):
 class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
-        # TODO
-        raise NotImplementedError()
+        super().__init__()
+        config: NanoVLMConfig = cast(NanoVLMConfig, vllm_config.model_config.hf_config)
+        multimodal_config = vllm_config.model_config.multimodal_config
+
+        self.config = config
+        self.multimodal_config = multimodal_config
+
+        with self._mark_composite_model(
+            vllm_config,
+            language_targets=LanguageModel,
+            tower_targets={"image": ViT}
+        ):
+            self.model = NanoVLMModel(
+                vllm_config=vllm_config,
+                prefix=maybe_prefix(prefix, "model")
+            )
+
+        self.image_token_id = self.config.image_token_id
+        self.logits_processor = LogitsProcessor(config.lm_vocab_size)
+
+    def _parse_and_validate_image_input(self, **kwargs: object) -> ImageInputs | None:
+        pixel_values = kwargs.pop("pixel_values", None)
+        image_embeds = kwargs.pop("image_embeds", None)
+
+        if pixel_values is None and image_embeds is None:
+            return None
+
+        if image_embeds is not None:
+            return NanoVLMImageEmbeddingInputs(
+                type="image_embeds",
+                data=image_embeds,
+            )
+
+        if pixel_values is not None:
+            pixel_attention_mask = kwargs.pop("pixel_attention_mask")
+            num_patches = kwargs.pop("num_patches")
+            expected_h = expected_w = self.config.vit_img_size
+
+            return NanoVLMImagePixelInputs(
+                type="pixel_values",
+                pixel_values=pixel_values,
+                pixel_attention_mask=pixel_attention_mask,
+                num_patches=num_patches,
+                resolve_bindings={"h": expected_h, "w": expected_w},
+            )
+
+        raise AssertionError("This line should be unreachable.")
+
+    def _process_image_input(
+        self,
+        image_input: ImageInputs,
+    ) -> torch.Tensor | list[torch.Tensor]:
+        if image_input["type"] == "image_embeds":
+            return image_input["data"]
+
+        pixel_values = image_input["pixel_values"]
+        pixel_attention_mask = image_input["pixel_attention_mask"]
+
+        image_features = self.model.vision_encoder(pixel_values)
+        image_features = self.model.MP(image_features)
+
+        num_patches = image_input["num_patches"]
+        return [e.flatten(0, 1) for e in image_features.split(num_patches.tolist())]
 
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
-        # TODO
-        raise NotImplementedError()
-
         image_input = self._parse_and_validate_image_input(**kwargs)
         if image_input is None:
             return []
@@ -737,11 +800,52 @@ class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
         inputs_embeds: torch.Tensor | None = None,
         **kwargs: object,
     ) -> torch.Tensor | IntermediateTensors:
-        # TODO
-        raise NotImplementedError()
+        if intermediate_tensors is not None:
+            inputs_embeds = None
+
+        hidden_states = self.model.decoder(
+            input_ids, positions, intermediate_tensors, inputs_embeds=inputs_embeds
+        )
+
+        return hidden_states
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # TODO
-        raise NotImplementedError()
-        logits = self.logits_processor(self.lm_head, hidden_states)
+        logits = self.logits_processor(self.model.decoder.head, hidden_states)
         return logits
+
+    def get_num_mm_encoder_tokens(
+        self,
+        num_image_tokens: int,
+    ) -> int:
+        raise NotImplementedError()
+        hf_config = self.config
+        scale_factor = hf_config.scale_factor
+
+        return num_image_tokens * scale_factor**2
+
+    def get_num_mm_connector_tokens(
+        self,
+        num_vision_tokens: int,
+    ) -> int:
+        raise NotImplementedError()
+        hf_config = self.config
+        scale_factor = hf_config.scale_factor
+
+        return num_vision_tokens // scale_factor**2
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> None:
+        from .utils import AutoWeightsLoader
+
+        loader = AutoWeightsLoader(self)
+        return loader.load_weights(weights)
+
+
+    def get_mm_mapping(self) -> MultiModelKeys:
+        """
+        Get the module prefix in multimodal models
+        """
+        return MultiModelKeys.from_string_field(
+            language_model="model.decoder",
+            connector="model.MP",
+            tower_model="model.encoder",
+        )

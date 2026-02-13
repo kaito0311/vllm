@@ -15,6 +15,7 @@ from transformers.image_processing_base import BatchFeature as ImageBatchFeature
 
 from vllm.config import VllmConfig
 from vllm.config.multimodal import BaseDummyOptions
+from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
 from vllm.model_executor.models.utils import IntermediateTensors, maybe_prefix
 from vllm.utils.tensor_schema import TensorSchema, TensorShape
@@ -713,6 +714,21 @@ class NanoVLMModel(nn.Module):
 from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
 from vllm.model_executor.models.module_mapping import MultiModelKeys
 
+
+class SimpleLogitsProcessor(LogitsProcessor):
+    def _get_logits(self, hidden_states: torch.Tensor, lm_head: VocabParallelEmbedding, embedding_bias: torch.Tensor | None) -> torch.Tensor | None:
+        logits = lm_head(hidden_states)
+        if embedding_bias is not None:
+            logits += embedding_bias
+        
+        logits = self._gather_logits(logits)
+
+        if logits is not None:
+            logits = logits[..., : self.org_vocab_size]
+        
+        return logits
+        
+
 @MULTIMODAL_REGISTRY.register_processor(
     NanoVLMMultiModalProcessor,
     info=NanoVLMProcessingInfo,
@@ -739,7 +755,7 @@ class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
             )
 
         self.image_token_id = self.config.image_token_id
-        self.logits_processor = LogitsProcessor(config.lm_vocab_size)
+        self.logits_processor = SimpleLogitsProcessor(config.lm_vocab_size)
 
     def _parse_and_validate_image_input(self, **kwargs: object) -> ImageInputs | None:
         pixel_values = kwargs.pop("pixel_values", None)

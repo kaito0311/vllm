@@ -7,17 +7,12 @@ def test_vllm_generate():
     llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
     llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
-    prompt = "USER: <image>\nWhat is the content of this image?\nASSISTANT:"
+    prompt = "USER: hello how are you \nASSISTANT:"
 
     image = Image.open("images/test_image.jpg").convert("RGB")
 
     outputs = llm.generate(
-        {
-            "prompt": prompt,
-            "multi_modal_data": {
-                "image": image
-            }
-        }
+        ["hello my name is"]
     ) 
 
     for o in outputs:
@@ -33,23 +28,23 @@ def test_vllm_chat():
 
     conversation = [
         {"role": "system", "content": "You are a helpful assistant"},
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hello! How can I assist you today?"},
-        {
-            "role": "user",
-            "content": [
+        {"role": "user", "content": "Hello, What's your name?"},
+        # {"role": "assistant", "content": "Hello! How can I assist you today?"},
+        # {
+        #     "role": "user",
+        #     "content": [
            
-                {
-                    "type": "image_pil",
-                    "image_pil": image,
-                },
+        #         {
+        #             "type": "image_pil",
+        #             "image_pil": image,
+        #         },
            
-                {
-                    "type": "text",
-                    "text": "What's in these images?",
-                },
-            ],
-        },
+        #         {
+        #             "type": "text",
+        #             "text": "What's in these images?",
+        #         },
+        #     ],
+        # },
     ]
 
     # Perform inference and log output.
@@ -61,11 +56,11 @@ def test_vllm_chat():
 
 def main():
 
-    # print("Testing vLLM chat...")
-    # test_vllm_chat()
+    print("Testing vLLM chat...")
+    test_vllm_chat()
     
-    print("Testing vLLM generate...")
-    test_vllm_generate()
+    # print("Testing vLLM generate...")
+    # test_vllm_generate()
 
 
 if __name__ == "__main__":

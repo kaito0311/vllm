@@ -64,7 +64,7 @@ class RotaryEmbedding(nn.Module):
         # Standard RoPE implementation - create frequencies for each dimension
         # freq_i = 1 / (base^(2i/dim)) where i is the dimension index
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float() / self.dim))
-        # self.register_buffer("inv_freq", inv_freq)
+        self.register_buffer("inv_freq", inv_freq)
         self.original_max_seq_len = cfg.lm_max_position_embeddings
         self.attention_scaling = cfg.lm_attn_scaling
 
@@ -393,6 +393,8 @@ class LanguageModelBlock(nn.Module):
 
         return x, block_kv_cache
 
+from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.model_executor.models.utils import maybe_prefix
 # https://github.com/meta-llama/llama3/blob/main/llama/model.py#L251
 class LanguageModel(nn.Module):
     def __init__(self, cfg, prefix: str = ""):
@@ -408,6 +410,12 @@ class LanguageModel(nn.Module):
         ])
         self.norm = RMSNorm(cfg, prefix=f"{prefix}.norm") # Final Norm
         self.head = nn.Linear(cfg.lm_hidden_dim, cfg.lm_vocab_size, bias=False)
+        # self.head = ParallelLMHead(
+        #     cfg.lm_vocab_size,
+        #     cfg.lm_hidden_dim,
+        #     quant_config=None,
+        #     prefix=maybe_prefix(prefix, "lm_head")
+        # )
         if self.lm_tie_weights:
             self.head.weight = self.token_embedding.weight
 
@@ -423,7 +431,9 @@ class LanguageModel(nn.Module):
         elif isinstance(module, RMSNorm):
             module.weight.data.fill_(1.0)
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor=None, kv_cache: list[dict]=None, start_pos: int=0):
+    from vllm.sequence import IntermediateTensors
+
+    def forward(self, input_ids: torch.Tensor | None, positions: torch.Tensor, intermediate_tensors: IntermediateTensors, inputs_embeds: torch.Tensor | None = None) -> torch.Tensor | IntermediateTensors:
         """
         Performs a forward pass through the language model.
 
@@ -461,35 +471,37 @@ class LanguageModel(nn.Module):
             - The method returns the logits or embeddings along with the updated
             cache for efficient decoding.
         """
-        if self.lm_use_tokens:
-            x = self.token_embedding(x)
+
+        # if self.lm_use_tokens:
+        #     x = self.token_embedding(x)
+
+        if inputs_embeds is None:
+            raise NotImplementedError()
+        
+        x = inputs_embeds.unsqueeze(0)
 
         # T_curr is the length of the current input sequence
         B, T_curr, _ = x.size()
         
         # Create position_ids for the current sequence based on start_pos
-        current_position_ids = torch.arange(start_pos, start_pos + T_curr, device=x.device).unsqueeze(0).expand(B, -1)
+        # current_position_ids = torch.arange(start_pos, start_pos + T_curr, device=x.device).unsqueeze(0).expand(B, -1)
+        current_position_ids = positions.unsqueeze(0) 
+
         cos, sin = self.rotary_embd(current_position_ids) # Get rotary position embeddings for current tokens
 
         # Initialize new KV cache if none provided
+        kv_cache = None
         if kv_cache is None:
             kv_cache = [None] * len(self.blocks)
 
         for i, block in enumerate(self.blocks):
-            x, kv_cache[i] = block(x, cos, sin, attention_mask, kv_cache[i])
+            x, kv_cache[i] = block(x, cos, sin, None, kv_cache[i])
 
         x = self.norm(x)
 
-        print("x shape before head: ", x.shape)
-        # Compute logits if we are using tokens, otherwise stay in the embedding space
-        if self.lm_use_tokens: 
-            x = self.head(x) 
-        
-        print("x shape after head: ", x.shape)
-
-        
-
-        return x, kv_cache
+        x = x.squeeze(0)
+    
+        return x
 
 
     @torch.inference_mode()

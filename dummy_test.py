@@ -11,8 +11,8 @@ def load_model_info():
 
 
 def test_load_weight():
-    path = "pretrained_models/SmolVLM-135M/model.safetensors"
-    path = "/media/minhdt/DATA/Code/test_ocr/training_tiny_llm/nanoVLM_Qwen/checkpoints/pretrained_continue/step_39500/model.safetensors"
+    path = "pretrained_models/SmolVLM-256M-Instruct/model.safetensors"
+    # path = "/media/minhdt/DATA/Code/test_ocr/training_tiny_llm/nanoVLM_Qwen/checkpoints/pretrained_continue/step_39500/model.safetensors"
     state_dict = load_file(path, device="cuda")
 
     print(dict(state_dict).keys())
@@ -94,16 +94,16 @@ if __name__ == "__main__":
     #     prefix="model."
     # )
 
-    # test_load_weight()
+    test_load_weight()
     # delete_a_key_from_safetensors(
     #     input_path="pretrained_models/SmolVLM-135M/model.safetensors",
     #     output_path="pretrained_models/SmolVLM-135M/model_no_inv_freq.safetensors",
     #     key_to_delete="model.decoder.rotary_embd.inv_freq"
     # )
 
-    copy_head_weight_to_token_embed_weight(
-        input_path="pretrained_models/SmolVLM-135M/model.safetensors",
-        output_path="pretrained_models/SmolVLM-135M/model_with_shared_embed.safetensors",
-        head_key="model.decoder.head.weight",
-        embed_key="model.decoder.token_embedding.weight"
-    )
+    # copy_head_weight_to_token_embed_weight(
+    #     input_path="pretrained_models/SmolVLM-135M/model.safetensors",
+    #     output_path="pretrained_models/SmolVLM-135M/model_with_shared_embed.safetensors",
+    #     head_key="model.decoder.head.weight",
+    #     embed_key="model.decoder.token_embedding.weight"
+    # )

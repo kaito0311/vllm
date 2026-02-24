@@ -199,6 +199,7 @@ def safe_apply_chat_template(
             tools=tools,  # type: ignore[arg-type]
             chat_template=chat_template,
             tokenize=tokenize,
+            **kwargs
             # **resolved_kwargs,
         )
     # External library exceptions can sometimes occur despite the framework's

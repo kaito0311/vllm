@@ -2,17 +2,20 @@ from vllm import LLM, SamplingParams
 from PIL import Image 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
+# vllm serve "./pretrained_models/SmolVLM-256M-Instruct" --kv-cache-memory-bytes 0 --cpu-offload-gb 8 --max-num-seqs 1 --max-model-len 4096 --port 8080
+
 def test_vllm_generate():
     # llm = LLM("./pretrained_models/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
     llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096)
-    llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
+    # llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
     prompt = "USER: hello how are you \nASSISTANT:"
 
     image = Image.open("images/test_image.jpg").convert("RGB")
 
     outputs = llm.generate(
-        ["hello my name is"]
+        ["Paris is the capital of"],
+        sampling_params=sampling_params
     ) 
 
     for o in outputs:
@@ -21,30 +24,13 @@ def test_vllm_generate():
 
 def test_vllm_chat():
 
-    llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", kv_cache_memory_bytes=0, cpu_offload_gb=8, max_num_seqs=1, max_model_len=4096, gpu_memory_utilization=0.7)
+    llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", enforce_eager=True, kv_cache_memory_bytes=0, cpu_offload_gb=0.0, max_num_seqs=1, max_model_len=8192, enable_prefix_caching=False, dtype="float")
     llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
     image = Image.open("images/test_image.jpg").convert("RGB")
 
     conversation = [
-        {"role": "system", "content": "You are a helpful assistant"},
-        {"role": "user", "content": "Hello, What's your name?"},
-        # {"role": "assistant", "content": "Hello! How can I assist you today?"},
-        # {
-        #     "role": "user",
-        #     "content": [
-           
-        #         {
-        #             "type": "image_pil",
-        #             "image_pil": image,
-        #         },
-           
-        #         {
-        #             "type": "text",
-        #             "text": "What's in these images?",
-        #         },
-        #     ],
-        # },
+        {"role": "assistant", "content": "Paris is capital of"},
     ]
 
     # Perform inference and log output.

@@ -1,3 +1,14 @@
+## About this version
+
+I trained a small VLM model (sourced from [NanoVLM](git@github.com:kaito0311/nanoVLM.git)), and I have added it to the vLLM project to serve the model as a fun project.
+
+Below is the to-do list:
+
+- [x] Serve the nanoVLM model
+- [ ] Optimize the nanoVLM model using vLLM’s built-in modules and CUDA Graph
+
+---
+
 <!-- markdownlint-disable MD001 MD041 -->
 <p align="center">
   <picture>

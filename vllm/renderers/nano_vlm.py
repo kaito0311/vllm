@@ -267,13 +267,7 @@ class NanoVLMRenderer(BaseRenderer):
         conversation, mm_data, mm_uuids = parse_chat_messages(
             messages,
             model_config,
-            content_format=resolve_chat_template_content_format(
-                chat_template=params.chat_template,
-                tools=params.chat_template_kwargs.get("tools"),
-                given_format=params.chat_template_content_format,
-                tokenizer=tokenizer,
-                model_config=model_config,
-            ),
+            content_format="openai", # NOTE: Currently, I will hardcode it to "openai" format as I don't know how to trigger the other formats.
         )
 
         prompt_raw = safe_apply_chat_template(

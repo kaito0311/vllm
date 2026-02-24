@@ -24,13 +24,30 @@ def test_vllm_generate():
 
 def test_vllm_chat():
 
-    llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct", enforce_eager=True, kv_cache_memory_bytes=0, cpu_offload_gb=0.0, max_num_seqs=1, max_model_len=8192, enable_prefix_caching=False, dtype="float")
+    llm = LLM("HuggingFaceTB/SmolVLM-256M-Instruct")
     llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
-    image = Image.open("images/test_image.jpg").convert("RGB")
+    image = Image.open("images/ava.webp").convert("RGB")
 
     conversation = [
-        {"role": "assistant", "content": "Paris is capital of"},
+        {"role": "system", "content": "You are a helpful assistant"},
+        {"role": "user", "content": "Hello, What's your name?"},
+        {"role": "assistant", "content": "Hello! How can I assist you today?"},
+        {
+            "role": "user",
+            "content": [
+           
+                {
+                    "type": "image_pil",
+                    "image_pil": image,
+                },
+           
+                {
+                    "type": "text",
+                    "text": "What's in these images?",
+                },
+            ],
+        },
     ]
 
     # Perform inference and log output.

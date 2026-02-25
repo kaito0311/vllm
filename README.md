@@ -1,6 +1,6 @@
 ## About this version
 
-I trained a small VLM model (sourced from [NanoVLM](git@github.com:kaito0311/nanoVLM.git)), and I have added it to the vLLM project to serve the model as a fun project.
+I trained a small VLM model (sourced from [NanoVLM](https://github.com/kaito0311/nanoVLM)), and I have added it to the vLLM project to serve the model as a fun project.
 
 Below is the to-do list:
 

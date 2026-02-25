@@ -7,14 +7,14 @@ client = OpenAI(
     api_key="token-abc123",
 )
 
-completion = client.chat.completions.create(
-    model="./pretrained_models/SmolVLM-135M",
-    messages=[
-        {"role": "user", "content": "Hello! Who is America's president?"},
-    ],
-)
+# completion = client.chat.completions.create(
+#     model="./pretrained_models/SmolVLM-135M",
+#     messages=[
+#         {"role": "user", "content": "Hello! Who is America's president?"},
+#     ],
+# )
 
-print(completion.choices[0].message.content)
+# print(completion.choices[0].message.content)
 
 
 # ── Option A: image from local file ───────────────────────────────
@@ -25,11 +25,10 @@ def image_to_base64(path: str | Path) -> str:
     return f"data:image/jpeg;base64,{base64_image}"
 
 
-image_path = "images/test_image.jpg"
+image_path = "images/ava.webp"
 image_data_url = image_to_base64(image_path)
 
-# ── Option B: image from URL (easier, no base64 needed) ───────────
-# image_data_url = "https://example.com/screenshot.jpg"
+
 
 response = client.chat.completions.create(
     model="./pretrained_models/SmolVLM-135M",          # or "gpt-4o", "gpt-4-turbo"

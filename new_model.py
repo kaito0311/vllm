@@ -2,7 +2,7 @@ from vllm import LLM, SamplingParams
 from PIL import Image 
 
 
-# vllm serve "./pretrained_models/SmolVLM-135M" --kv-cache-memory-bytes 0 --cpu-offload-gb 0 --max-num-seqs 1 --max-model-len 4096 --port 8080 --no-enable-prefix-caching --dtype float --enforce-eager --no-async-scheduling --distributed-executor-backend uni
+# vllm serve "./pretrained_models/SmolVLM-135M" --max-num-seqs 1 --max-model-len 4096 --port 8080 --dtype float --enforce-eager
 
 def test_vllm_chat():
 

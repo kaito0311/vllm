@@ -27,7 +27,6 @@ class DynamicResize(torch.nn.Module):
         self.p = int(patch_size)
         self.m = int(max_side_len)
         self.interpolation = interpolation
-        print(f"Resize to max side len: {resize_to_max_side_len}")
         self.resize_to_max_side_len = resize_to_max_side_len
 
     # ------------------------------------------------------------

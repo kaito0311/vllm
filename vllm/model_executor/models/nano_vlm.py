@@ -656,7 +656,7 @@ class NanoVLMModel(nn.Module):
         if pixel_values is not None:
             pixel_attention_mask = kwargs.pop("pixel_attention_mask")
             num_patches = kwargs.pop("num_patches")
-            expected_h = expected_w = self.config.vision_config.image_size
+            expected_h = expected_w = self.config.vit_img_size
 
             return NanoVLMImagePixelInputs(
                 type="pixel_values",
@@ -709,7 +709,9 @@ class NanoVLMModel(nn.Module):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        ...
+        return self.decoder(
+            input_ids, positions, intermediate_tensors, inputs_embeds=inputs_embeds
+        )
 
 from vllm.transformers_utils.configs.nano_vlm import NanoVLMConfig
 from vllm.model_executor.models.module_mapping import MultiModelKeys
@@ -833,7 +835,6 @@ class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
         self,
         num_image_tokens: int,
     ) -> int:
-        raise NotImplementedError()
         hf_config = self.config
         scale_factor = hf_config.scale_factor
 
@@ -843,7 +844,6 @@ class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
         self,
         num_vision_tokens: int,
     ) -> int:
-        raise NotImplementedError()
         hf_config = self.config
         scale_factor = hf_config.scale_factor
 
@@ -863,5 +863,5 @@ class NanoVLMForConditionalGeneration(nn.Module, SupportsMultiModal):
         return MultiModelKeys.from_string_field(
             language_model="model.decoder",
             connector="model.MP",
-            tower_model="model.encoder",
+            tower_model="model.vision_encoder",
         )

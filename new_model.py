@@ -6,7 +6,7 @@ from PIL import Image
 
 def test_vllm_chat():
 
-    llm = LLM("./pretrained_models/SmolVLM-135M", enforce_eager=True, kv_cache_memory_bytes=0, cpu_offload_gb=0.0, max_num_seqs=2, max_model_len=64000, enable_prefix_caching=False, dtype="float")
+    llm = LLM("./pretrained_models/SmolVLM-135M", enforce_eager=False, kv_cache_memory_bytes=0, cpu_offload_gb=0.0, max_num_seqs=2, max_model_len=64000, enable_prefix_caching=False, dtype="float")
     llm._cached_repr = "<vLLM.LLM Object - Debug Mode>"
 
     # image = Image.open("images/test_image.jpg").convert("RGB")

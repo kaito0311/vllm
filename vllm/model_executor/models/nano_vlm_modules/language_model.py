@@ -82,14 +82,8 @@ class RotaryEmbedding(nn.Module):
         """
 
         batch_size, seq_len = position_ids.shape
-        # Dynamic scaling for longer sequences
-        # Divide the angle frequency to fit more rotation into the embedding space.
-        max_seq = position_ids.max() + 1
-        if max_seq > self.original_max_seq_len:
-            scale = max_seq / self.original_max_seq_len
-            inv_freq = self.inv_freq / scale
-        else:
-            inv_freq = self.inv_freq
+        # vLLM guarantees positions stay within max_model_len; no dynamic scaling needed.
+        inv_freq = self.inv_freq
             
         # Compute theta = position * frequency
         # Flatten position_ids for batch processing
